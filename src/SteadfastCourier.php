@@ -240,13 +240,14 @@ class SteadfastCourier
     }
 
     /**
-     * GET /fraud_check/{phone}
+     * GET /fraud_check/score/{phone}
      *
      * A recipient's delivery and cancellation history across Steadfast.
+     * As new api docs `/fraud_check/{phone}` are not available in Steadfast API. It will available in `/fraud_check/score/{phone}`
      */
     public function fraudCheck($phone)
     {
-        return $this->get('/fraud_check/'.$this->requiredSegment($phone, 'phone number'));
+        return $this->get('/fraud_check/score/'.$this->requiredSegment($phone, 'phone number'));
     }
 
     // ---------------------------------------------------------------------

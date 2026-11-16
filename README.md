@@ -135,7 +135,7 @@ If you prefer the registered alias, `\SteadFastCourier::placeOrder(...)` works i
 | `GET` | `/payments` | [`getPayments()`](#payments) | List the payments Steadfast has made to you. |
 | `GET` | `/payments/{payment_id}` | [`getPayment()`](#payments) | Read one payment. |
 | `GET` | `/police_stations` | [`getPoliceStations()`](#police-stations) | Districts and their police stations, for pickup requests. |
-| `GET` | `/fraud_check/{phone}` | [`fraudCheck()`](#fraud-check) | A recipient's delivery and cancellation history. |
+| `GET` | `/fraud_check/score/{phone}` | [`fraudCheck()`](#fraud-check) | A recipient's delivery and cancellation history. |
 
 <sup>1</sup> Not listed in the current Postman collection, but still served by the API and
 supported here since 1.x.
@@ -457,10 +457,21 @@ $response = SteadfastCourier::fraudCheck('01309055966');
 
 ```json
 {
-    "total_parcels": 24,
-    "total_delivered": 9,
-    "total_cancelled": 15,
-    "total_fraud_reports": []
+    "status": 200,
+    "phone": "01712345678",
+    "delivery_ratio": 92,
+    "cancellation_ratio": 7,
+    "volume_band": "high",
+    "volume_range": "50+",
+    "delivered_count": 58,
+    "cancelled_count": 5,
+    "total_reports": 0,
+    "fraud_categories": [],
+    "score": null,
+    "level": null,
+    "reasons": [],
+    "scoring_disabled": true,
+    "doubtful_reports": false
 }
 ```
 
