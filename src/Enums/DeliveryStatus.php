@@ -23,6 +23,12 @@ enum DeliveryStatus: string
     case Unknown = 'unknown';
 
     /**
+     * Lost, damaged or otherwise off the normal path. Like Unknown, it is not
+     * settled, so it counts as in progress, and it needs support.
+     */
+    case Exceptional = 'exceptional';
+
+    /**
      * Read the status out of a status-check response, or null when the response
      * carries no recognisable status.
      */
@@ -85,7 +91,9 @@ enum DeliveryStatus: string
      */
     public function needsSupport(): bool
     {
-        return $this === self::Unknown || $this === self::UnknownApprovalPending;
+        return $this === self::Unknown
+            || $this === self::UnknownApprovalPending
+            || $this === self::Exceptional;
     }
 
     public function label(): string
@@ -102,6 +110,7 @@ enum DeliveryStatus: string
             self::Hold => 'On hold',
             self::InReview => 'Order placed, under review',
             self::Unknown => 'Unknown status, contact support',
+            self::Exceptional => 'Lost, damaged or off the normal path, contact support',
         };
     }
 }
