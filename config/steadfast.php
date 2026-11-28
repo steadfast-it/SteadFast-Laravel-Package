@@ -64,10 +64,11 @@ return [
     | Retries
     |--------------------------------------------------------------------------
     |
-    | Total attempts for requests that fail to connect, and how long to wait
-    | between them in milliseconds. Only idempotent reads (status lookups and
-    | the balance check) are retried: retrying an order creation that timed out
-    | could book the same parcel twice, and the API has no idempotency key.
+    | Total attempts for a read that fails to connect or gets a 5xx, and how
+    | long to wait between them in milliseconds. A 4xx is never retried: a 401
+    | gets the same answer every time, and ten in five minutes lock the keys
+    | out for an hour. Writes are never retried automatically; Steadfast
+    | refuses a duplicate invoice, so retry one yourself with the same invoice.
     |
     */
 

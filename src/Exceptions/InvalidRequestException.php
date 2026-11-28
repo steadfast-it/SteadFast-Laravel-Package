@@ -49,6 +49,23 @@ class InvalidRequestException extends SteadfastCourierException
         ));
     }
 
+    public static function invalidPageNumber(string $name, $value): self
+    {
+        return new self(sprintf(
+            'The %s must be a whole number of 1 or more, %s given.',
+            $name,
+            is_scalar($value) ? var_export($value, true) : get_debug_type($value)
+        ));
+    }
+
+    public static function invalidDate(string $name): self
+    {
+        return new self(sprintf(
+            'The "%s" date must be a DateTimeInterface or a non-empty Y-m-d string.',
+            $name
+        ));
+    }
+
     public static function missingConsignmentReference(): self
     {
         return new self(

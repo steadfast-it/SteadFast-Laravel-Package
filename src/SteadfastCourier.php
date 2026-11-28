@@ -2,11 +2,17 @@
 
 namespace SteadFast\SteadFastCourierLaravelPackage;
 
+use DateTimeInterface;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use SteadFast\SteadFastCourierLaravelPackage\Enums\ParcelState;
 use SteadFast\SteadFastCourierLaravelPackage\Exceptions\InvalidRequestException;
 use SteadFast\SteadFastCourierLaravelPackage\Exceptions\SteadfastCourierException;
+use Throwable;
 
 class SteadfastCourier
 {
@@ -96,6 +102,21 @@ class SteadfastCourier
         return $this->post('/create_order/bulk-order', $orders);
     }
 
+    /**
+     * POST /create_order/bulk-order/extended
+     *
+     * The same request as bulkCreateOrders(). The difference is in the answer:
+     * each failed entry's "error" is a list of readable validation messages
+     * ("The recipient phone field is required.") rather than a JSON-encoded
+     * string of codes ("RECEIVER_PHONE_IS_REQUIRED").
+     */
+    public function bulkCreateOrdersExtended($data)
+    {
+        $orders = $this->validateOrderList($data);
+
+        return $this->post('/create_order/bulk-order/extended', $orders);
+    }
+
     // ---------------------------------------------------------------------
     // Delivery status and tracking
     // ---------------------------------------------------------------------
@@ -106,6 +127,19 @@ class SteadfastCourier
     public function checkDeliveryStatusByConsignmentId($id)
     {
         return $this->get('/status_by_cid/'.$this->requiredSegment($id, 'consignment id'));
+    }
+
+    /**
+     * GET /status_with_return_status_by_cid/{id}
+     *
+     * As checkDeliveryStatusByConsignmentId(), except that for a parcel coming
+     * back to you "delivery_status" holds the return stage instead, such as
+     * "cancelled_return_proccessing". Read it with ReturnStatus::fromResponse(),
+     * and fall back to DeliveryStatus::fromResponse() for any other parcel.
+     */
+    public function checkDeliveryStatusWithReturnStatus($consignmentId)
+    {
+        return $this->get('/status_with_return_status_by_cid/'.$this->requiredSegment($consignmentId, 'consignment id'));
     }
 
     /**
@@ -174,6 +208,23 @@ class SteadfastCourier
     }
 
     /**
+     * GET /get_return_requests?page={page}
+     *
+     * One page of return requests, ten to a page, newest first. The response's
+     * "meta.last_page" says how many pages there are.
+     *
+     * A separate method rather than an optional argument on getReturnRequests(),
+     * so that an application extending this class and overriding that method
+     * keeps a compatible signature.
+     */
+    public function getReturnRequestsPage($page)
+    {
+        return $this->send('GET', '/get_return_requests', [
+            'query' => ['page' => $this->pageNumber($page, 'page')],
+        ]);
+    }
+
+    /**
      * GET /get_return_request/{id}
      */
     public function getReturnRequest($id)
@@ -217,6 +268,80 @@ class SteadfastCourier
     }
 
     /**
+     * GET /payments?page={page}
+     *
+     * One page of payouts, ten to a page. A page past the end comes back with
+     * an empty "payments" list.
+     */
+    public function getPaymentsPage($page)
+    {
+        return $this->send('GET', '/payments', [
+            'query' => ['page' => $this->pageNumber($page, 'page')],
+        ]);
+    }
+
+    // ---------------------------------------------------------------------
+    // Parcel states and stats
+    // ---------------------------------------------------------------------
+
+    /**
+     * GET /parcel_states
+     *
+     * The four figures at the top of the merchant dashboard: how many parcels
+     * are in each state, and the cash on delivery riding on them. Read live,
+     * not cached.
+     */
+    public function getParcelStates()
+    {
+        return $this->get('/parcel_states');
+    }
+
+    /**
+     * GET /parcel_states/{state}
+     *
+     * The parcels in one dashboard state, latest first. The API pages 20 at a
+     * time by default; pass $perPage to change that. An unknown state is left
+     * for the API to reject, so a state Steadfast adds later works without a
+     * package release.
+     *
+     * @param  ParcelState|string  $state
+     */
+    public function getParcelsByState($state, $page = null, $perPage = null)
+    {
+        $state = $state instanceof ParcelState ? $state->value : $state;
+
+        $query = array_filter([
+            'page' => $page === null ? null : $this->pageNumber($page, 'page'),
+            'per_page' => $perPage === null ? null : $this->pageNumber($perPage, 'per page'),
+        ], fn ($value) => $value !== null);
+
+        return $this->send(
+            'GET',
+            '/parcel_states/'.$this->requiredSegment($state, 'parcel state'),
+            $query === [] ? [] : ['query' => $query]
+        );
+    }
+
+    /**
+     * GET /stats
+     *
+     * Counts and cash on delivery per outcome for the parcels booked between
+     * two dates, inclusive. With no dates, the API reports the last 30 days.
+     *
+     * @param  DateTimeInterface|string|null  $from
+     * @param  DateTimeInterface|string|null  $to
+     */
+    public function getStats($from = null, $to = null)
+    {
+        $query = array_filter([
+            'from' => $this->dateParameter($from, 'from'),
+            'to' => $this->dateParameter($to, 'to'),
+        ], fn ($value) => $value !== null);
+
+        return $this->send('GET', '/stats', $query === [] ? [] : ['query' => $query]);
+    }
+
+    /**
      * GET /payments/{payment_id}
      */
     public function getPayment($paymentId)
@@ -242,11 +367,55 @@ class SteadfastCourier
     /**
      * GET /fraud_check/{phone}
      *
-     * A recipient's delivery and cancellation history across Steadfast.
+     * @deprecated Steadfast retired this endpoint on 27 September 2026. It still
+     *             answers, but every count in the response is now 0, so every
+     *             customer looks clean. Use fraudScore() instead. This method
+     *             keeps its old path and response so existing code does not
+     *             break, and will be removed in 3.0.
      */
     public function fraudCheck($phone)
     {
+        $this->reportDeprecation(
+            'SteadfastCourier::fraudCheck() is deprecated: Steadfast retired /fraud_check/{phone} on '
+            .'27 September 2026 and it now returns 0 for every count. Use fraudScore() instead.'
+        );
+
         return $this->get('/fraud_check/'.$this->requiredSegment($phone, 'phone number'));
+    }
+
+    /**
+     * GET /fraud_check/score/{phone}
+     *
+     * A customer's delivery record across Steadfast: delivery and cancellation
+     * ratios, a volume band, and what other merchants have reported. The
+     * response shape differs from fraudCheck(): there is no "total_parcels".
+     */
+    public function fraudScore($phone)
+    {
+        return $this->get('/fraud_check/score/'.$this->requiredSegment($phone, 'phone number'));
+    }
+
+    // ---------------------------------------------------------------------
+    // Service check
+    // ---------------------------------------------------------------------
+
+    /**
+     * GET /ping
+     *
+     * Needs no credentials and sends none, so it cannot count towards the
+     * lockout for repeated authentication failures. If this answers, the base
+     * URL is right and the network can reach Steadfast; anything failing after
+     * that is the keys or the request.
+     */
+    public function ping()
+    {
+        $url = $this->baseUrl().'/ping';
+
+        $client = Http::withHeaders(['Accept' => 'application/json'])
+            ->timeout($this->timeout)
+            ->connectTimeout($this->connectTimeout);
+
+        return $this->decode('GET', $url, $client->get($url));
     }
 
     // ---------------------------------------------------------------------
@@ -303,6 +472,70 @@ class SteadfastCourier
         }
 
         return rawurlencode($segment);
+    }
+
+    /**
+     * Write a deprecation to the application's Laravel deprecations log channel
+     * (logging.deprecations, LOG_DEPRECATIONS_CHANNEL), and nowhere else.
+     *
+     * Deliberately not trigger_error(E_USER_DEPRECATED): an application whose
+     * error handler throws on every error, ignoring error_reporting(), would
+     * turn a still-working call into an exception on upgrade. Writing to the
+     * log directly cannot throw, print, or fail a test suite. With no channel
+     * configured (Laravel's default is "null") nothing is written.
+     */
+    protected function reportDeprecation(string $message): void
+    {
+        try {
+            $config = config('logging.deprecations');
+            $channel = is_array($config) ? ($config['channel'] ?? null) : $config;
+
+            if (! is_string($channel) || $channel === '' || $channel === 'null') {
+                return;
+            }
+
+            Log::channel($channel)->warning($message);
+        } catch (Throwable) {
+            // Reporting a deprecation must never break the call it is about.
+        }
+    }
+
+    /**
+     * A page number or page size: a positive whole number, as an int or a
+     * numeric string. Anything else cannot be a page and is refused locally.
+     */
+    protected function pageNumber($value, string $name): int
+    {
+        if (is_int($value) || (is_string($value) && ctype_digit(trim($value)))) {
+            $number = (int) (is_string($value) ? trim($value) : $value);
+
+            if ($number >= 1) {
+                return $number;
+            }
+        }
+
+        throw InvalidRequestException::invalidPageNumber($name, $value);
+    }
+
+    /**
+     * A date for a query string, as Y-m-d. Strings are passed through for the
+     * API to validate, so the API's own message reaches the caller.
+     */
+    protected function dateParameter($value, string $name): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if ($value instanceof DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+
+        if (is_string($value) && trim($value) !== '') {
+            return trim($value);
+        }
+
+        throw InvalidRequestException::invalidDate($name);
     }
 
     protected function get(string $uri)
@@ -370,10 +603,21 @@ class SteadfastCourier
             ->connectTimeout($this->connectTimeout);
 
         // Only idempotent reads are retried. Retrying a create_order call that
-        // timed out could book the same parcel twice, and the Steadfast API
-        // offers no idempotency key that would make that safe.
+        // timed out could book the same parcel twice.
+        //
+        // And only failures that a second attempt can fix: a dropped connection
+        // or a 5xx. A 401 is the same answer every time, and Steadfast counts
+        // each one: ten in five minutes locks the keys out for an hour, so
+        // retrying it would only get there faster. A 429 means back off, not
+        // try again 200ms later.
         if ($method === 'GET' && $this->retryTimes > 1) {
-            $client = $client->retry($this->retryTimes, $this->retrySleep, throw: false);
+            $client = $client->retry(
+                $this->retryTimes,
+                $this->retrySleep,
+                fn ($exception) => $exception instanceof ConnectionException
+                    || ($exception instanceof RequestException && $exception->response->serverError()),
+                throw: false
+            );
         }
 
         return $client;

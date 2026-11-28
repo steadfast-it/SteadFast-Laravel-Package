@@ -6,6 +6,61 @@ in this file.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and the
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [Unreleased]
+
+Planned as 2.1.0. Adds the endpoints Steadfast has published since 2.0 and fixes the retry
+rules. Nothing is removed and no existing signature, URL or response changes, so upgrading
+needs no code changes. Read **Deprecated** if you call `fraudCheck()`.
+
+### Deprecated
+
+- **`fraudCheck()` no longer returns real data.** Steadfast retired `/fraud_check/{phone}` on
+  27 September 2026. It still answers 200, but every count is `0`, so every customer looks
+  clean. Use the new `fraudScore()` instead; its response is shaped differently. `fraudCheck()`
+  keeps its path and response, and writes a warning to the application's deprecations log
+  channel (`LOG_DEPRECATIONS_CHANNEL`) when one is set. It raises no PHP error, so an
+  application error handler that throws on every error cannot turn it into an exception. It
+  will be removed in 3.0.
+
+### Added
+
+- `fraudScore($phone)` for `GET /fraud_check/score/{phone}`: delivery and cancellation ratios,
+  a volume band and merchant reports.
+- `ping()` for `GET /ping`. Sends no credentials, so it cannot count towards the lockout for
+  failed authentication.
+- `bulkCreateOrdersExtended($orders)` for `POST /create_order/bulk-order/extended`. Same input
+  and checks as `bulkCreateOrders()`, with readable validation messages per rejected order.
+- `checkDeliveryStatusWithReturnStatus($consignmentId)` for
+  `GET /status_with_return_status_by_cid/{id}`.
+- `getParcelStates()` and `getParcelsByState($state, $page = null, $perPage = null)` for
+  `GET /parcel_states` and `GET /parcel_states/{state}`.
+- `getStats($from = null, $to = null)` for `GET /stats`. Accepts `Y-m-d` strings or any
+  `DateTimeInterface`.
+- `getReturnRequestsPage($page)` and `getPaymentsPage($page)`, to read past the first page of
+  ten. These are new methods rather than new arguments on `getReturnRequests()` and
+  `getPayments()`, so a class that extends the client and overrides those keeps a compatible
+  signature.
+- `DeliveryStatus::Exceptional` for the `exceptional` status (lost, damaged or off the normal
+  path). It counts as in progress, and `needsSupport()` is true for it. `fromResponse()` used to
+  return `null` for this status.
+- `ReturnStatus` enum for the six return statuses, with `fromResponse()`, `isProcessing()`,
+  `isRiderAssigned()`, `isReceived()`, `wasPartialDelivery()` and `deliveryStatus()`.
+- `ParcelState` enum for the four dashboard states.
+- README sections on status codes, the authentication lockout, status caching, and the
+  characters and lengths Steadfast silently changes.
+- A README note that fraud lookups have their own quota, separate from the request rate
+  limit. On the account tested it was 18 searches, shared by `fraudCheck()` and
+  `fraudScore()`; past it both answer 429 with "You have reached your maximum allowed
+  searches."
+
+### Fixed
+
+- **A read that fails with a 4xx is no longer retried.** Every failed response was retried,
+  including a 401. Steadfast locks the keys out for 60 minutes after ten failed
+  authentications in five minutes, so the retry made a bad key reach the lockout twice as fast.
+  Reads are now retried only on a connection failure or a 5xx. The response returned to you is
+  unchanged.
+
 ## [2.0.0] - 2026-11-10
 
 Full coverage of the official SteadFast API, plus fixes for several defects in 1.x. Read
@@ -120,4 +175,5 @@ Releases before 2.0.0 predate this changelog. See the
 [commit history](https://github.com/steadfast-it/SteadFast-Laravel-Package/commits/main) for
 what changed in each.
 
+[Unreleased]: https://github.com/steadfast-it/SteadFast-Laravel-Package/compare/2.0.0...HEAD
 [2.0.0]: https://github.com/steadfast-it/SteadFast-Laravel-Package/compare/1.1.4...2.0.0

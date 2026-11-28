@@ -16,6 +16,7 @@ it('covers every status the API documents', function () {
             'hold',
             'in_review',
             'unknown',
+            'exceptional',
         ]);
 });
 
